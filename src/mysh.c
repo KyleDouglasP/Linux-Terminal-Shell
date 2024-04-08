@@ -48,7 +48,7 @@ typedef struct arraylist{
     void arraylist_add(arraylist_t *list, char* add){
 
         if(list->length == list->capacity){
-            list->capacity *= 2;
+            list->capacity = list->capacity*2;
             char **temp = realloc(list->string_array, list->capacity * sizeof(char*));
             if(temp==NULL){
                 fprintf(stderr, "Out of memory!\n");
@@ -57,8 +57,8 @@ typedef struct arraylist{
             list->string_array = temp;
         }
 
-        list->string_array[list->length];
-        list->length++;
+        list->string_array[list->length] = strdup(add);
+        list->length=list->length+1;
 
     }
 
@@ -68,7 +68,16 @@ typedef struct arraylist{
     }
 
     void arraylist_destroy(arraylist_t *list){
+        for(int i=0; i<list->length; i++){
+            free(list->string_array[i]);
+        }
         free(list->string_array);
+    }
+
+    void arraylist_print(arraylist_t *list){
+        for(int i=0; i<list->length; i++){
+            printf("%s\n", list->string_array[i]);
+        }
     }
 
 typedef struct program{
@@ -89,17 +98,23 @@ arraylist_t tokenize_command(char *command_line){
     char temp_string[50];
 	int temp_string_index = 0;
 
-    char ch=command_line[temp_string_index];
+    int command_line_index = 0;
+
+    char ch=command_line[command_line_index];
     bool prev_whitespace = true;
 
-    while(ch!='\n'){
+    while(1){
 
         if(ch==' '){
             if(!prev_whitespace){
                 arraylist_add(&token_list, temp_string);
                 temp_string_index=0;
             }
+            
             prev_whitespace=true;
+            command_line_index++;
+            ch = command_line[command_line_index];
+
             continue;
         }
 
@@ -114,14 +129,27 @@ arraylist_t tokenize_command(char *command_line){
             str[0]=ch;
             arraylist_add(&token_list, str);
             prev_whitespace = true;
+
+            command_line_index++;
+            ch = command_line[command_line_index];
+            
             continue;
 
-        } 
+        }
+
+        if(ch=='\n'){
+            if(!prev_whitespace){
+                arraylist_add(&token_list, temp_string);
+                temp_string_index=0;
+            }
+            break;
+        }
 
         temp_string[temp_string_index] = ch;
         temp_string[temp_string_index+1] = '\0';
         temp_string_index++;
-        ch = command_line[temp_string_index];
+        command_line_index++;
+        ch = command_line[command_line_index];
         prev_whitespace=false;
 
     }
@@ -151,18 +179,76 @@ arraylist_t tokenize_command(char *command_line){
 
 /// @brief Interprets command line, making it into a program struct
 void interpret_command(char *command_line){
+
     arraylist_t token_list = tokenize_command(command_line);
+
+    program_t process;
+    arraylist_t argument_list;
+    arraylist_init(&argument_list, 2);
+
     for(int i=0; i<token_list.length; i++){
-        printf("%s\n", token_list.string_array[i]);
+
+        // User wants to change the input of the process
+        if(strcmp(token_list.string_array[i], "<")){
+
+            if(process.input==NULL){
+                if(i+1<token_list.length){
+                    process.input = token_list.string_array[i+1];
+                    i++;
+                    continue;
+                } else {
+                    printf("Missing input file!");
+                    exit(EXIT_FAILURE);
+                }
+            } else {
+                printf("Can only set one input!");
+                exit(EXIT_FAILURE);
+            }
+
+        }
+
+        // User wants to change the output of the process
+        if(strcmp(token_list.string_array[i], ">")){
+
+            if(process.output==NULL){
+                if(i+1<token_list.length){
+                    process.output = token_list.string_array[i+1];
+                    i++;
+                    continue;
+                } else {
+                    printf("Missing output file!");
+                    exit(EXIT_FAILURE);
+                }
+            } else {
+                printf("Can only set one output!");
+                exit(EXIT_FAILURE);
+            }
+
+        }
+
+        // User wants to pipe to the next process
+        // User wants to change the input of the process
+        if(strcmp(token_list.string_array[i], "|")){
+
+            arraylist_add(&argument_list, NULL);
+            // goto piping;
+
+        }
+
+        arraylist_add(&argument_list, token_list.string_array[i]);
+
     }
+
+
+
+    
 
 }
 
 /// @brief Interprets given program
-void interpret_program(char *command_line){
+void interpret_program(program_t process){
 
-    
-    char *program_name = strtok(command_line, " \n");
+    char *program_name = process.argument_list[0];
 
     if(strcmp(program_name, "cd")==0){
 
