@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 
 static int exit_status = EXIT_SUCCESS;
+static bool need_to_exit = false;
 static int base_pipe[2];
 
 /// @brief Searches for given file name in sample directories, and returns correct filepath if found
@@ -229,60 +230,41 @@ void interpret_program(program_t process, int mode, int fd[]){
     } else {
         int wait_status;
         pid = wait(&wait_status);
+        exit_status=wait_status;
         return;
     }
 
     char *program_name = process.argv[0];
 
-    if(strcmp(program_name, "cd")==0){
-
-        if(process.argc<2){
-            printf("cd: Please specify target directory!\n");
-            exit_status=EXIT_FAILURE;
-            return;
-        }
-        if(process.argc>2){
-            printf("cd: Too many arguments!\n");
-            exit_status=EXIT_FAILURE;
-            return;
-        }
-        char *new_path = process.argv[1];
-        if(chdir(new_path)==-1) {
-            printf("cd: Cannot find target directory!\n");
-            exit_status=EXIT_FAILURE;
-        }
-        exit_status=EXIT_SUCCESS;
-        return;
-
-    } else if(strcmp(program_name, "pwd")==0){
+    if(strcmp(program_name, "pwd")==0){
 
         if(process.argc>1){
             printf("pwd: Too many arguments!\n");
             exit_status=EXIT_FAILURE;
-            return;
+            exit(EXIT_FAILURE);
         }
         char path_buffer[BUFFER_SIZE];
         getcwd(path_buffer, BUFFER_SIZE);
         printf("%s\n", path_buffer);
-        return;
+        exit(EXIT_SUCCESS);
 
     } else if(strcmp(program_name, "which")==0){
 
         if(process.argc<2){
             printf("which: Please specify target file!\n");
             exit_status=EXIT_FAILURE;
-            return;
+            exit(EXIT_FAILURE);
         }
         if(process.argc>2){
             printf("which: Too many arguments!\n");
             exit_status=EXIT_FAILURE;
-            return;
+            exit(EXIT_FAILURE);
         }
         char *potential_file = process.argv[1];
         potential_file = (find_file(potential_file));
         printf("%s\n", potential_file);
         free(potential_file);
-        return;
+        exit(EXIT_SUCCESS);
 
     } else if(strcmp(program_name, "exit")==0){
 
@@ -290,8 +272,7 @@ void interpret_program(program_t process, int mode, int fd[]){
             printf("%s ", process.argv[i]);
             if(i==process.argc-1) printf("\n");
         }
-        printf("Exiting my shell.\n");
-        exit_status=EXIT_SUCCESS;
+        need_to_exit=true;
         exit(EXIT_SUCCESS);
 
     }
@@ -302,7 +283,7 @@ void interpret_program(program_t process, int mode, int fd[]){
             printf("%s\n", program_name);
             free(program_name);
             exit_status=EXIT_FAILURE;
-            return;
+            exit(EXIT_FAILURE);
         }
         free(process.argv[0]);
         process.argv[0]=program_name;
@@ -310,8 +291,8 @@ void interpret_program(program_t process, int mode, int fd[]){
 
 
     execv(program_name, process.argv);
+    exit_status=EXIT_FAILURE;
     exit(EXIT_FAILURE);
-
 
     int wait_status;
     pid = wait(&wait_status);
@@ -330,6 +311,7 @@ void pipe_helper(program_t process){
     interpret_program(*(process.pipe), PIPED_MODE, fd);
 
     while ((pid = wait(&status)) != -1);
+    exit_status = status;
 		
 	return;
 
@@ -347,6 +329,7 @@ void interpret_command(char *command_line){
     (*process_pointer).output_set=false;
     (*process_pointer).pipe_set=false;
 
+
     program_t process2;
     process2.input_set=false;
     process2.output_set=false;
@@ -358,6 +341,24 @@ void interpret_command(char *command_line){
     arraylist_init(&argument_list, 2);
 
     for(int i=0; i<token_list.length; i++){
+
+        if(strcmp(token_list.string_array[i], "exit")==0 && argument_list.length==0) need_to_exit=true;
+
+        if(strcmp(token_list.string_array[i], "then")==0 && i==0){
+            if(exit_status==EXIT_SUCCESS){
+                continue;
+            } else {
+                return;
+            }
+        }
+
+        if(strcmp(token_list.string_array[i], "else")==0 && i==0){
+            if(exit_status==EXIT_FAILURE){
+                continue;
+            } else {
+                return;
+            }
+        }
 
         // User wants to change the input of the process
         if(strcmp(token_list.string_array[i], "<")==0){
@@ -430,6 +431,29 @@ void interpret_command(char *command_line){
     arraylist_add(&argument_list, NULL);
     (*process_pointer).argv = arraylist_get_array(&argument_list);
 
+    if(strcmp(process.argv[0], "cd")==0){
+
+        if(process.argc<2){
+            printf("cd: Please specify target directory!\n");
+            exit_status=EXIT_FAILURE;
+            return;
+        }
+        if(process.argc>2){
+            printf("cd: Too many arguments!\n");
+            exit_status=EXIT_FAILURE;
+            return;
+        }
+        char *new_path = process.argv[1];
+        if(chdir(new_path)==-1) {
+            printf("cd: Cannot find target directory!\n");
+            exit_status=EXIT_FAILURE;
+            return;
+        }
+        exit_status=EXIT_SUCCESS;
+        return;
+
+    }
+
     if(process.pipe_set){
         pipe_helper(process);
         return;
@@ -437,7 +461,11 @@ void interpret_command(char *command_line){
     
     int fd[2];
     pipe(fd);
+    int status;
+
     interpret_program(process, DEFAULT_MODE, fd);
+    wait(&status);
+    exit_status=status;
 
 }
 
@@ -450,8 +478,13 @@ void run_interactive()
 
     char term_buffer[BUFFER_SIZE];
 
-    while(read(0, term_buffer, BUFFER_SIZE)){
+    while(read(STDIN_FILENO, term_buffer, BUFFER_SIZE)){
         interpret_command(term_buffer);
+        if(need_to_exit) {
+            printf("Exiting my shell.\n");
+            exit(EXIT_SUCCESS);
+        }
+
         printf("mysh> ");
         fflush(stdout);
     }
@@ -459,10 +492,42 @@ void run_interactive()
 }
 
 /// @brief Launches batch mode, with supplied filepath argument
-void run_batch(const char* filepath)
+void run_batch(const char* potential_filepath)
 {
-
+    char *filepath = find_file(potential_filepath);
+    if(strcmp(filepath, "Failed to find target file!") == 0){
+        printf("%s\n", filepath);
+        free(filepath);
+        exit_status=EXIT_FAILURE;
+        return;
+    }
+    
     int fd = open(filepath, O_RDONLY);
+
+    char ch;
+
+	char buffer[BUFFER_SIZE];
+	int temp_string_index = 0;
+
+	while (read(fd, &ch, 1)==1)
+	{
+		if(ch=='\n'){
+			buffer[temp_string_index]='\n';
+            buffer[temp_string_index+1]='\0';
+			temp_string_index=0;
+            interpret_command(buffer);
+            if(need_to_exit) {
+                printf("Exiting my shell.\n");
+                exit(EXIT_SUCCESS);
+            }
+		} else {
+			buffer[temp_string_index]=ch;
+			temp_string_index++;
+		}
+
+	}
+
+    close(fd);
 
 }
 
@@ -471,13 +536,12 @@ int main(int argc, const char* argv[])
 
     pipe(base_pipe);
 
-    // if(isatty(p[0])==1){
     if(argc==1){
         run_interactive();
     } else if (argc==2){
         run_batch(argv[1]);
     } else {
-        printf("Too many arguments supplied!");
+        printf("Too many arguments supplied for batch mode!\n");
     }
 
 }
