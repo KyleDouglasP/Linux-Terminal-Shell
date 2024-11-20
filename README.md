@@ -1,7 +1,7 @@
-My Shell - CS 214 Spring 2024
+My Shell
 =============================
 
-Author: Kyle Perry (kdp125)
+Author: Kyle Perry
 
 Build Instructions
 ==================
